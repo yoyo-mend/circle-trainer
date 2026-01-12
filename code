@@ -1,0 +1,155 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Circle Trainer</title>
+  <style>
+    body { font-family: system-ui, Arial; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+    .wrap { width:min(720px, 92vw); }
+    canvas { width:100%; height:auto; border:1px solid #ddd; border-radius:12px; touch-action:none; }
+    .row { display:flex; gap:12px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+    button { padding:10px 14px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; }
+    .stat { font-weight:600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="c" width="700" height="500"></canvas>
+    <div class="row">
+      <button id="reset">Reset</button>
+      <button id="toggleGuide">Toggle guide</button>
+      <div class="stat" id="score">Score: —</div>
+      <div class="stat" id="smooth">Smoothness: —</div>
+    </div>
+    <p style="opacity:.75;margin:10px 0 0;">
+      Tip: lock your fingers, move your forearm, and draw in one continuous motion.
+    </p>
+  </div>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+let drawing = false;
+let pts = [];
+let showGuide = true;
+
+// Guide circle
+const cx = canvas.width * 0.5;
+const cy = canvas.height * 0.52;
+const R  = Math.min(canvas.width, canvas.height) * 0.26;
+
+function draw() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // background
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // guide
+  if (showGuide) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI*2);
+    ctx.strokeStyle = "rgba(0,0,0,0.12)";
+    ctx.lineWidth = 6;
+    ctx.stroke();
+  }
+
+  // user stroke
+  if (pts.length) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
+    ctx.lineWidth = 5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  }
+}
+
+function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+
+function analyze() {
+  if (pts.length < 30) return {score:null, smooth:null};
+
+  // Find best-fit circle center ~ average
+  let mx=0,my=0;
+  for (const p of pts){ mx+=p.x; my+=p.y; }
+  mx/=pts.length; my/=pts.length;
+
+  // Radii from mean center
+  const radii = pts.map(p => Math.hypot(p.x-mx, p.y-my));
+  const rMean = radii.reduce((a,b)=>a+b,0)/radii.length;
+
+  // radial error
+  const err = radii.map(r => Math.abs(r - rMean));
+  const errMean = err.reduce((a,b)=>a+b,0)/err.length;
+
+  // Normalize score: smaller avg error => higher score
+  // (tuned so ~0..100-ish)
+  const score = Math.max(0, Math.min(100, 100 - (errMean / rMean) * 320));
+
+  // Smoothness: angle-change variability (lower is smoother)
+  let turns = [];
+  for (let i=2;i<pts.length;i++){
+    const a = {x: pts[i-1].x-pts[i-2].x, y: pts[i-1].y-pts[i-2].y};
+    const b = {x: pts[i].x-pts[i-1].x, y: pts[i].y-pts[i-1].y};
+    const da = Math.hypot(a.x,a.y), db = Math.hypot(b.x,b.y);
+    if (da<0.5 || db<0.5) continue;
+    const cos = (a.x*b.x + a.y*b.y) / (da*db);
+    const ang = Math.acos(Math.max(-1, Math.min(1, cos)));
+    turns.push(ang);
+  }
+  const tMean = turns.reduce((a,b)=>a+b,0)/turns.length;
+  const tVar  = turns.reduce((a,b)=>a+(b-tMean)**2,0)/turns.length;
+  const smooth = Math.max(0, Math.min(100, 100 - Math.sqrt(tVar)*220));
+
+  return {score, smooth};
+}
+
+function updateStats() {
+  const {score, smooth} = analyze();
+  document.getElementById("score").textContent =
+    score == null ? "Score: —" : `Score: ${score.toFixed(1)}%`;
+  document.getElementById("smooth").textContent =
+    smooth == null ? "Smoothness: —" : `Smoothness: ${smooth.toFixed(1)}%`;
+}
+
+function getPos(e) {
+  const r = canvas.getBoundingClientRect();
+  const x = (e.clientX - r.left) * (canvas.width / r.width);
+  const y = (e.clientY - r.top) * (canvas.height / r.height);
+  return {x,y};
+}
+
+function start(e){
+  drawing = true;
+  pts = [getPos(e)];
+  draw(); updateStats();
+}
+function move(e){
+  if (!drawing) return;
+  const p = getPos(e);
+  // drop points that are too close (reduces jitter)
+  if (dist(p, pts[pts.length-1]) > 1.2) pts.push(p);
+  draw(); updateStats();
+}
+function end(){
+  drawing = false;
+  draw(); updateStats();
+}
+
+canvas.addEventListener("pointerdown", (e)=>{ canvas.setPointerCapture(e.pointerId); start(e); });
+canvas.addEventListener("pointermove", move);
+canvas.addEventListener("pointerup", end);
+canvas.addEventListener("pointercancel", end);
+
+document.getElementById("reset").onclick = () => { pts=[]; draw(); updateStats(); };
+document.getElementById("toggleGuide").onclick = () => { showGuide=!showGuide; draw(); };
+
+draw();
+</script>
+</body>
+</html>
